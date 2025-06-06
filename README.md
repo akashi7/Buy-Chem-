@@ -32,7 +32,7 @@ cp .env.example .env
 
 4. Configure your database in `.env`:
 
-```
+```bash
 DB_CONNECTION=pgsql
 DB_HOST=127.0.0.1
 DB_PORT=5432
@@ -284,8 +284,12 @@ Response:
 #### Resume Registration
 
 ```http
-GET /api/register/resume
-Authorization: Bearer {token}
+POST /api/register/resume
+Content-Type: application/json
+
+{
+    "unique_identifier": "your-uuid-here"
+}
 ```
 
 Response:
