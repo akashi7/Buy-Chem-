@@ -59,32 +59,33 @@ class RegistrationWizardController extends Controller
     public function step2(Request $request, $unique_identifier)
     {
         $validated = $request->validate([
-            'country_of_residence' => 'required|string',
+            'address_line1' => 'required|string',
             'city' => 'required|string',
+            'state' => 'nullable|string',
             'postal_code' => 'required|string',
-            'apartment_name' => 'nullable|string',
-            'room_number' => 'nullable|string',
+            'country' => 'required|string',
         ]);
 
         $wizard = RegistrationWizard::where('unique_identifier', $unique_identifier)->firstOrFail();
         if ($wizard->current_step < 1) {
             return response()->json(['error' => 'Complete previous steps first'], 400);
         }
-
-        $is_expatriate = $wizard->nationality !== $validated['country_of_residence'];
+        // Only allow moving to step 2 if step 1 data is present
+        if (!$wizard->first_name || !$wizard->last_name || !$wizard->email) {
+            return response()->json(['error' => 'Step 1 data incomplete'], 400);
+        }
 
         $wizard->update([
-            'country_of_residence' => $validated['country_of_residence'],
+            'address_line1' => $validated['address_line1'],
             'city' => $validated['city'],
+            'state' => $validated['state'],
             'postal_code' => $validated['postal_code'],
-            'apartment_name' => $validated['apartment_name'],
-            'room_number' => $validated['room_number'],
-            'is_expatriate' => $is_expatriate,
+            'country' => $validated['country'],
             'current_step' => 2,
         ]);
 
         return response()->json([
-            'message' => 'Step 2 completed',
+            'message' => 'Step 2 completed successfully',
             'unique_identifier' => $wizard->unique_identifier,
             'current_step' => $wizard->current_step,
         ]);
@@ -97,14 +98,17 @@ class RegistrationWizardController extends Controller
         if ($wizard->current_step < 2) {
             return response()->json(['error' => 'Complete previous steps first'], 400);
         }
-
-        // Here you would send a 2FA code to the user's email and verify it
-        // For demo, we just mark as verified
+        // Only allow moving to step 3 if step 2 data is present
+        if (!$wizard->address_line1 || !$wizard->city || !$wizard->postal_code || !$wizard->country) {
+            return response()->json(['error' => 'Step 2 data incomplete'], 400);
+        }
+        // Only allow marking 2FA as verified if code is actually verified (simulate for demo)
+        if (!$wizard->two_factor_verified) {
+            return response()->json(['error' => '2FA not verified. Please verify your code.'], 400);
+        }
         $wizard->update([
-            'two_factor_verified' => true,
             'current_step' => 3,
         ]);
-
         return response()->json([
             'message' => 'Step 3 (2FA) completed',
             'unique_identifier' => $wizard->unique_identifier,
@@ -115,49 +119,43 @@ class RegistrationWizardController extends Controller
     // Step 4: Password Setup
     public function step4(Request $request, $unique_identifier)
     {
-        try {
-            $wizard = RegistrationWizard::where('unique_identifier', $unique_identifier)->first();
-
-            if (!$wizard) {
-                return response()->json([
-                    'error' => 'Registration session not found. Please start over.',
-                ], 404);
-            }
-
-            // Check if previous steps are completed
-            if ($wizard->current_step < 3) {
-                return response()->json([
-                    'error' => 'Please complete steps 2 and 3 before setting your password.',
-                    'current_step' => $wizard->current_step,
-                    'required_step' => 3,
-                    'steps_completed' => [
-                        'step1' => $wizard->current_step >= 1,
-                        'step2' => $wizard->current_step >= 2,
-                        'step3' => $wizard->current_step >= 3
-                    ]
-                ], 422);
-            }
-
-            $request->validate([
-                'password' => 'required|min:8|confirmed',
-            ]);
-
-            $wizard->update([
-                'password' => bcrypt($request->input('password')),
-                'current_step' => 4,
-            ]);
-
+        $wizard = RegistrationWizard::where('unique_identifier', $unique_identifier)->first();
+        if (!$wizard) {
             return response()->json([
-                'message' => 'Password updated successfully',
-                'current_step' => $wizard->current_step,
-                'unique_identifier' => $wizard->unique_identifier
-            ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'error' => 'An error occurred while updating your password.',
-                'message' => $e->getMessage()
-            ], 500);
+                'error' => 'Registration session not found. Please start over.',
+            ], 404);
         }
+        // Check if previous steps are completed
+        if ($wizard->current_step < 3) {
+            return response()->json([
+                'error' => 'Please complete steps 2 and 3 before setting your password.',
+                'current_step' => $wizard->current_step,
+                'required_step' => 3,
+                'steps_completed' => [
+                    'step1' => $wizard->current_step >= 1,
+                    'step2' => $wizard->current_step >= 2,
+                    'step3' => $wizard->current_step >= 3
+                ]
+            ], 422);
+        }
+        // Only allow if 2FA is verified
+        if (!$wizard->two_factor_verified) {
+            return response()->json([
+                'error' => '2FA must be verified before setting password.'
+            ], 400);
+        }
+        $request->validate([
+            'password' => 'required|min:8|confirmed',
+        ]);
+        $wizard->update([
+            'password' => bcrypt($request->input('password')),
+            'current_step' => 4,
+        ]);
+        return response()->json([
+            'message' => 'Password updated successfully',
+            'current_step' => $wizard->current_step,
+            'unique_identifier' => $wizard->unique_identifier
+        ]);
     }
 
     // Step 5: Review & Confirm
@@ -167,13 +165,17 @@ class RegistrationWizardController extends Controller
         if ($wizard->current_step < 4) {
             return response()->json(['error' => 'Complete previous steps first'], 400);
         }
-
-        // Here you would show all data for review and, on confirmation, move to final user creation
-        // For demo, just mark as completed
+        // Only allow if password is set
+        if (!$wizard->password) {
+            return response()->json(['error' => 'Password must be set before confirming registration.'], 400);
+        }
+        $request->validate([
+            'terms_accepted' => 'required|boolean|in:1,true',
+        ]);
         $wizard->update([
+            'terms_accepted' => true,
             'current_step' => 5,
         ]);
-
         return response()->json([
             'message' => 'Step 5 (Review & Confirm) completed',
             'unique_identifier' => $wizard->unique_identifier,
@@ -182,15 +184,21 @@ class RegistrationWizardController extends Controller
     }
 
     // Resume registration by unique identifier
-    public function resume($unique_identifier)
+    public function resume(Request $request)
     {
-        $wizard = RegistrationWizard::where('unique_identifier', $unique_identifier)->firstOrFail();
-        return response()->json($wizard);
-    }
-
-    public function checkStatus($unique_identifier)
-    {
-        $registration = RegistrationWizard::where('unique_identifier', $unique_identifier)->first();
+        // If user is authenticated, try to find their registration
+        if ($request->user()) {
+            $registration = RegistrationWizard::where('email', $request->user()->email)->first();
+        } else {
+            // If not authenticated, check if unique_identifier is provided
+            if (!$request->has('unique_identifier')) {
+                return response()->json([
+                    'error' => 'Unique identifier is required'
+                ], 400);
+            }
+            
+            $registration = RegistrationWizard::where('unique_identifier', $request->unique_identifier)->first();
+        }
 
         if (!$registration) {
             return response()->json([
@@ -198,6 +206,44 @@ class RegistrationWizardController extends Controller
             ], 404);
         }
 
+        return response()->json([
+            'current_step' => $registration->current_step,
+            'unique_identifier' => $registration->unique_identifier,
+            'registration_data' => [
+                'first_name' => $registration->first_name,
+                'last_name' => $registration->last_name,
+                'email' => $registration->email,
+                'gender' => $registration->gender,
+                'date_of_birth' => $registration->date_of_birth,
+                'nationality' => $registration->nationality,
+                'phone_number' => $registration->phone_number,
+                'address_line1' => $registration->address_line1,
+                'city' => $registration->city,
+                'state' => $registration->state,
+                'postal_code' => $registration->postal_code,
+                'country' => $registration->country,
+                'two_factor_verified' => $registration->two_factor_verified,
+                'terms_accepted' => $registration->terms_accepted
+            ]
+        ]);
+    }
+
+    // Registration status with consistency warning
+    public function checkStatus($unique_identifier)
+    {
+        $registration = RegistrationWizard::where('unique_identifier', $unique_identifier)->first();
+        if (!$registration) {
+            return response()->json([
+                'error' => 'Registration not found'
+            ], 404);
+        }
+        $warnings = [];
+        if ($registration->current_step >= 3 && !$registration->two_factor_verified) {
+            $warnings[] = '2FA not completed but current_step >= 3';
+        }
+        if ($registration->current_step >= 5 && !$registration->terms_accepted) {
+            $warnings[] = 'Terms not accepted but current_step >= 5';
+        }
         return response()->json([
             'current_step' => $registration->current_step,
             'steps_completed' => [
@@ -222,7 +268,8 @@ class RegistrationWizardController extends Controller
                 'country' => $registration->country,
                 'two_factor_verified' => $registration->two_factor_verified,
                 'terms_accepted' => $registration->terms_accepted
-            ]
+            ],
+            'warnings' => $warnings
         ]);
     }
 }

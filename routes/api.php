@@ -26,7 +26,7 @@ Route::post('/register/{unique_identifier}/step2', [RegistrationWizardController
 Route::post('/register/{unique_identifier}/step3', [RegistrationWizardController::class, 'step3']);
 Route::post('/register/{unique_identifier}/step4', [RegistrationWizardController::class, 'step4']);
 Route::post('/register/{unique_identifier}/step5', [RegistrationWizardController::class, 'step5']);
-Route::get('/register/{unique_identifier}/resume', [RegistrationWizardController::class, 'resume']);
+Route::match(['get', 'post'], '/register/resume', [RegistrationWizardController::class, 'resume']);
 Route::get('/register/{unique_identifier}', [RegistrationWizardController::class, 'checkStatus']);
 
 Route::post('/login', [AuthController::class, 'login'])->middleware('throttle.login');
